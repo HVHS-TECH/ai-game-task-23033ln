@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>3D Sandbox with Blocks</title>
+<style>
+  body { margin: 0; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/controls/PointerLockControls.js"></script>
+
+<script>
+  // Scene setup
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87ceeb); // Sky blue
+
+  // Camera
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+  camera.position.y = 1.6; // Player eye height
+
+  // Renderer
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // Controls (first-person shooter style)
+  const controls = new THREE.PointerLockControls(camera, document.body);
+  document.body.addEventListener('click', () => {
+    controls.lock();
+  });
+
+  // Floor
+  const floorGeometry = new THREE.PlaneGeometry(100, 100);
+  const floorMaterial = new THREE.MeshPhongMaterial({color: 0x228B22});
+  const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+
+  // Light
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.position.set(10, 20, 10);
+  scene.add(light);
+
+  const ambientLight = new THREE.AmbientLight(0x404040);
+  scene.add(ambientLight);
+
+  // Player physics variables
+  const velocity = new THREE.Vector3();
+  const direction = new THREE.Vector3();
+  let canJump = false;
+
+  // Movement controls state
+  const move = { forward: false, backward: false, left: false, right: false };
+
+  // Key controls
+  document.addEventListener('keydown', (event) => {
+    switch(event.code) {
+      case 'ArrowUp':
+      case 'KeyW': move.forward = true; break;
+      case 'ArrowLeft':
+      case 'KeyA': move.left = true; break;
+      case 'ArrowDown':
+      case 'KeyS': move.backward = true; break;
+      case 'ArrowRight':
+      case 'KeyD': move.right = true; break;
+      case 'Space':
+        if(canJump) {
+          velocity.y += 5;
+          canJump = false;
+        }
+        break;
+    }
+  });
+  document.addEventListener('keyup', (event) => {
+    switch(event.code) {
+      case 'ArrowUp':
+      case 'KeyW': move.forward = false; break;
+      case 'ArrowLeft':
+      case 'KeyA': move.left = false; break;
+      case 'ArrowDown':
+      case 'KeyS': move.backward = false; break;
+      case 'ArrowRight':
+      case 'KeyD': move.right = false; break;
+    }
+  });
+
+  // Blocks array to store placed blocks
+  const blocks = [];
+
+  // Raycaster for block interaction
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+
+  // Block size
+  const blockSize = 1;
+
+  // Geometry and material for blocks
+  const blockGeometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+  const blockMaterial = new THREE.MeshPhongMaterial({color: 0x8B4513});
+
+  // Add initial block to stand on
+  addBlock(0, 0, 0);
+
+  // Function to add a block at grid position
+  function addBlock(x, y, z) {
+    // Prevent placing block inside player bounds (simple check)
+    const px = Math.floor(camera.position.x);
+    const py = Math.floor(camera.position.y);
+    const pz = Math.floor(camera.position.z);
+    if (Math.abs(x - px) < 2 && Math.abs(y - py) < 2 && Math.abs(z - pz) < 2) {
+      // Too close to player - skip
+      return false;
+    }
+    // Prevent duplicate blocks
+    for (let b of blocks) {
+      if (b.position.x === x && b.position.y === y && b.position.z === z) {
+        return false;
+      }
+    }
+    const block = new THREE.Mesh(blockGeometry, blockMaterial);
+    block.position.set(x, y, z);
+    scene.add(block);
+    blocks.push(block);
+    return true;
+  }
+
+  // Remove block at mesh
+  function removeBlock(block) {
+    scene.remove(block);
+    const index = blocks.indexOf(block);
+    if (index > -1) blocks.splice(index, 1);
+  }
+
+  // Handle mouse clicks for placing/removing blocks
+  window.addEventListener('mousedown', (event) => {
+    if (!controls.isLocked) return;
+
+    raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+
+    const intersects = raycaster.intersectObjects(blocks.concat(floor));
+
+    if (intersects.length > 0) {
+      const intersect = intersects[0];
+
+      if (event.button === 0) {
+        // Left click - place block on face normal offset
+        const pos = intersect.point.clone().add(intersect.face.normal);
+        const blockPos = pos.floor();
+
+        addBlock(blockPos.x, blockPos.y, blockPos.z);
+      } else if (event.button === 2) {
+        // Right click - remove block (only if not floor)
+        if (intersect.object !== floor) {
+          removeBlock(intersect.object);
+        }
+      }
+    }
+  });
+
+  // Prevent context menu on right-click
+  window.addEventListener('contextmenu', e => e.preventDefault());
+
+  // Player collider size
+  const playerHeight = 1.8;
+
+  // Clock for timing
+  const clock = new THREE.Clock();
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const delta = clock.getDelta();
+
+    velocity.x -= velocity.x * 10.0 * delta;
+    velocity.z -= velocity.z * 10.0 * delta;
+
+    velocity.y -= 9.8 * 5.0 * delta; // gravity
+
+    direction.z = Number(move.forward) - Number(move.backward);
+    direction.x = Number(move.right) - Number(move.left);
+    direction.normalize();
+
+    if(move.forward || move.backward) velocity.z -= direction.z * 50.0 * delta;
+    if(move.left || move.right) velocity.x -= direction.x * 50.0 * delta;
+
+    controls.moveRight(-velocity.x * delta);
+    controls.moveForward(-velocity.z * delta);
+    camera.position.y += velocity.y * delta;
+
+    // Floor collision detection
+    raycaster.set(camera.position, new THREE.Vector3(0, -1, 0));
+    const intersectsFloor = raycaster.intersectObject(floor);
+    let onFloor = false;
+
+    if(intersectsFloor.length > 0) {
+      const distance = intersectsFloor[0].distance;
+      if(distance < playerHeight) {
+        velocity.y = Math.max(0, velocity.y);
+        camera.position.y = playerHeight;
+        canJump = true;
+        onFloor = true;
+      }
+    }
+
+    // Block collision detection (prevent falling through blocks)
+    raycaster.set(camera.position, new THREE.Vector3(0, -1, 0));
+    const intersectsBlocks = raycaster.intersectObjects(blocks);
+
+    for (const intersect of intersectsBlocks) {
+      const dist = intersect.distance;
+      if(dist < playerHeight && !onFloor) {
+        velocity.y = Math.max(0, velocity.y);
+        camera.position.y = intersect.point.y + playerHeight;
+        canJump = true;
+        break;
+      }
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
